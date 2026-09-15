@@ -110,6 +110,14 @@ After editing `*_types.go` or kubebuilder markers:
 make generate
 ----
 
+That also regenerates `docs/crd.adoc` from the API types. To
+regenerate only the CRD reference:
+
+[source,bash]
+----
+make generate-crd-docs
+----
+
 When Calico Goldmane's gRPC API changes, regenerate the vendored proto and Go stubs. `protoc` must be on your PATH. Default `GOLDMANE_VERSION` is `v3.32.1` (same Calico version as e2e):
 
 [source,bash]
