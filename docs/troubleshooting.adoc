@@ -28,6 +28,14 @@ helm upgrade network-enforcer <chart> \
 `controller.logLevel` accepts `debug`, `info`, `warn`, or `error`.
 The chart passes the value as `--log-level` on the controller.
 
+Then follow the controller logs:
+
+[source,bash]
+----
+kubectl logs -n network-enforcer \
+  -l app.kubernetes.io/component=controller -c manager -f
+----
+
 [#no-proposals]
 == No proposals are being created
 
@@ -109,8 +117,7 @@ Each scraper (Istio OTLP logs, Goldmane, Hubble) writes marshaled records into
 an in-memory ring buffer. `GET /flow` drains that buffer and returns
 newline-delimited JSON (`application/jsonl`).
 
-* Empty body: nothing has been ingested since the last drain (or since enable),
-  or the buffer already dropped unread records.
+* Empty body: nothing has been ingested since the last drain.
 * JSONL lines: ingestion is alive; inspect the payload for identity, ports, and
   direction.
 
@@ -180,7 +187,21 @@ enabled, are also exported as OpenTelemetry logs.
 === Tail the OpenTelemetry collector
 
 With `telemetry.collectorStrategy=default`, the release deploys
-`<fullname>-otel-collector`. Its logs pipeline uses the debug exporter:
+`<fullname>-otel-collector`. Its logs pipeline uses the debug exporter
+(default verbosity `normal`).
+
+For richer dumps while troubleshooting, set the exporter to `detailed` by
+editing the collector ConfigMap, then restart the collector pod:
+
+[source,bash]
+----
+kubectl -n network-enforcer edit configmap network-enforcer-otel-collector
+# under exporters.debug, set: verbosity: detailed
+
+kubectl -n network-enforcer rollout restart deploy/network-enforcer-otel-collector
+----
+
+Then follow the collector logs:
 
 [source,bash]
 ----
