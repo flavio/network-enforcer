@@ -26,6 +26,11 @@ The goal is to reduce manual NetworkPolicy authoring effort while improving visi
 - [Phases: Learn, Monitor, Protect](https://github.com/kubewarden/network-enforcer/blob/main/docs/phases.adoc)
 - [Troubleshooting](https://github.com/kubewarden/network-enforcer/blob/main/docs/troubleshooting.adoc)
 
+### Reference
+
+- [API Reference (CRDs)](https://github.com/kubewarden/network-enforcer/blob/main/docs/crd.adoc)
+- [CRD Documentation](https://github.com/kubewarden/network-enforcer/blob/main/docs/crds/README.md)
+
 ## License
 
 Copyright 2026.

@@ -70,8 +70,12 @@ manifests: controller-gen ## Generate CRDs and RBAC.
 		charts/network-enforcer/templates/controller/role.yaml
 
 .PHONY: generate
-generate: manifests controller-gen generate-chart-values ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: manifests controller-gen generate-chart-values generate-crd-docs ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt" paths="./..."
+
+.PHONY: generate-crd-docs
+generate-crd-docs: ## Generate CRD documentation.
+	$(MAKE) -C docs/crds asciidoc
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
