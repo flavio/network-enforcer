@@ -98,6 +98,15 @@ Accepts configured int/string or provider default from helper.
 {{- end -}}
 
 {{/*
+Port the controller health/readiness probe endpoint binds to.
+Internal wiring: kept in a single place so the --health-probe-bind-address flag
+and the liveness/readiness probes cannot drift. Not user configurable.
+*/}}
+{{- define "network-enforcer.controller.probePort" -}}
+8081
+{{- end -}}
+
+{{/*
 Directory where Goldmane mTLS material is mounted in the controller.
 */}}
 {{- define "network-enforcer.goldmane.certDir" -}}

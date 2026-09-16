@@ -34,7 +34,9 @@ spec:
         - --flow-dumper-enabled={{ .Values.controller.flowDumper.enabled }}
         - --flow-dumper-port={{ .Values.controller.flowDumper.port }}
         - --flow-dumper-buffer-size={{ .Values.controller.flowDumper.bufferSize }}
-        {{- toYaml .Values.controller.args | nindent 8 }}
+        - --metrics-bind-address=:8443
+        - --leader-elect
+        - --health-probe-bind-address=:{{ include "network-enforcer.controller.probePort" . }}
         - --provider-name={{ .Values.controller.provider.name }}
         - --provider-endpoint={{ include "network-enforcer.controller.providerEndpoint" . }}
         - --wnp-status-reconciler-update-interval={{ .Values.controller.wnpStatusUpdateInterval }}
@@ -67,13 +69,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: {{ include "network-enforcer.controller.probePort" . }}
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: {{ include "network-enforcer.controller.probePort" . }}
           initialDelaySeconds: 5
           periodSeconds: 10
         resources: {{- toYaml .Values.controller.resources | nindent 10 }}
