@@ -9,12 +9,6 @@
                     "type": "object",
                     "additionalProperties": false
                 },
-                "args": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "containerSecurityContext": {
                     "type": "object",
                     "properties": {
