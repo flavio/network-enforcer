@@ -24,6 +24,7 @@ The goal is to reduce manual NetworkPolicy authoring effort while improving visi
 ### Usage
 
 - [Phases: Learn, Monitor, Protect](https://github.com/kubewarden/network-enforcer/blob/main/docs/phases.adoc)
+- [Known Limitations](https://github.com/kubewarden/network-enforcer/blob/main/docs/known_limitations.adoc)
 - [Troubleshooting](https://github.com/kubewarden/network-enforcer/blob/main/docs/troubleshooting.adoc)
 
 ### Reference
