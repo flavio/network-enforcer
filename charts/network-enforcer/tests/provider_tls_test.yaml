@@ -55,6 +55,16 @@ tests:
             secret:
               secretName: my-provider-certs
 
+  - it: "fails existingSecret mode without a Secret name"
+    set:
+      controller:
+        provider:
+          tls:
+            mode: existingSecret
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.provider.tls.existingSecret.name is required when controller.provider.tls.mode=existingSecret
+
   - it: "passes a cross-namespace existingSecret as flags"
     set:
       controller:

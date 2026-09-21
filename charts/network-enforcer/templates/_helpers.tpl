@@ -177,8 +177,8 @@ Validate provider TLS values and fail at template time.
 {{- if and (eq $mode "issuer") (not $issuer.name) -}}
 {{- fail "controller.provider.tls.issuerRef.name is required when controller.provider.tls.mode=issuer" -}}
 {{- end -}}
-{{- if and (eq $mode "existingSecret") $secret.namespace (not $secret.name) -}}
-{{- fail "controller.provider.tls.existingSecret.name is required when existingSecret.namespace is set" -}}
+{{- if and (eq $mode "existingSecret") (not $secret.name) -}}
+{{- fail "controller.provider.tls.existingSecret.name is required when controller.provider.tls.mode=existingSecret" -}}
 {{- end -}}
 {{- end -}}
 
