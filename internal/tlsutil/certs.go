@@ -103,14 +103,43 @@ func ServerCredentialsFromPEM(caPEM, certPEM, keyPEM []byte) (credentials.Transp
 }
 
 // ServerCredentials creates gRPC transport credentials for server-side mTLS.
-// It loads the server certificate and key, and configures client certificate
-// verification against the CA pool from the given certDir.
+// The server certificate, key, and CA under certDir are re-read on every
+// handshake so cert-manager CSI (and Secret) rotation works without restarting
+// the process.
 func ServerCredentials(certDir string) (credentials.TransportCredentials, error) {
-	caPEM, certPEM, keyPEM, err := readCertDirPEMs(certDir)
-	if err != nil {
+	if err := ValidateCertDir(certDir); err != nil {
+		return nil, fmt.Errorf("invalid cert dir: %w", err)
+	}
+	caPath := filepath.Join(certDir, CAFile)
+	certPath := filepath.Join(certDir, CertFile)
+	keyPath := filepath.Join(certDir, KeyFile)
+
+	// Fail fast at startup before any connections are accepted.
+	if _, err := LoadCACertPool(caPath); err != nil {
 		return nil, err
 	}
-	return ServerCredentialsFromPEM(caPEM, certPEM, keyPEM)
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			caPool, err := LoadCACertPool(caPath)
+			if err != nil {
+				return nil, err
+			}
+			serverCert, err := LoadKeyPair(certPath, keyPath)
+			if err != nil {
+				return nil, err
+			}
+			return &tls.Config{
+				MinVersion:   tls.VersionTLS13,
+				ClientAuth:   tls.RequireAndVerifyClientCert,
+				ClientCAs:    caPool,
+				Certificates: []tls.Certificate{serverCert},
+			}, nil
+		},
+	}
+	return credentials.NewTLS(tlsConfig), nil
 }
 
 // ClientTLSConfig builds a *[tls.Config] for an OTLP exporter client that

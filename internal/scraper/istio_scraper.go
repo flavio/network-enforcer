@@ -89,12 +89,12 @@ func (s *IstioScraper) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
+	defer func() { _ = listener.Close() }()
 
 	var opts []grpc.ServerOption
 	if s.TLSCertDir != "" {
 		creds, credsErr := tlsutil.ServerCredentials(s.TLSCertDir)
 		if credsErr != nil {
-			_ = listener.Close()
 			return fmt.Errorf("failed to load TLS credentials for OTLP logs server: %w", credsErr)
 		}
 		opts = append(opts, grpc.Creds(creds))

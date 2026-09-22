@@ -52,6 +52,7 @@ data:
         Tls                      {{ if eq $tlsMode "insecure" }}Off{{ else }}On{{ end }}
         Tls.verify               On
 {{- if ne $tlsMode "insecure" }}
+        Tls.verify_hostname      On
         Tls.ca_file              {{ include "network-enforcer.provider.tls.certDir" . }}/ca.crt
         Tls.crt_file             {{ include "network-enforcer.provider.tls.certDir" . }}/tls.crt
         Tls.key_file             {{ include "network-enforcer.provider.tls.certDir" . }}/tls.key

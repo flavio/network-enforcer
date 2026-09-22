@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -514,22 +515,57 @@ func freeLocalPort(t *testing.T) int {
 	return port
 }
 
+func TestStartTLSInvalidCertDir(t *testing.T) {
+	t.Parallel()
+
+	scraper := NewIstioScraper(IstioScraperConfig{
+		Logger:     slog.New(slog.DiscardHandler),
+		OtelPort:   freeLocalPort(t),
+		TLSCertDir: t.TempDir(), // empty dir: missing tls.crt / tls.key / ca.crt
+	})
+
+	err := scraper.Start(context.Background())
+	require.ErrorContains(t, err, "failed to load TLS credentials for OTLP logs server")
+}
+
 func TestStartTLSClient(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		name    string
-		useMTLS bool
+		creds   func(t *testing.T, certDir string) credentials.TransportCredentials
 		wantErr bool
 	}{
 		{
-			name:    "rejects plaintext client",
-			useMTLS: false,
+			name: "rejects plaintext client",
+			creds: func(t *testing.T, _ string) credentials.TransportCredentials {
+				t.Helper()
+				return insecure.NewCredentials()
+			},
 			wantErr: true,
 		},
 		{
-			name:    "accepts mTLS client",
-			useMTLS: true,
+			name: "rejects TLS client without a client certificate",
+			creds: func(t *testing.T, certDir string) credentials.TransportCredentials {
+				t.Helper()
+				caPool, err := tlsutil.LoadCACertPool(filepath.Join(certDir, tlsutil.CAFile))
+				require.NoError(t, err)
+				return credentials.NewTLS(&tls.Config{
+					MinVersion: tls.VersionTLS13,
+					RootCAs:    caPool,
+					ServerName: "localhost",
+				})
+			},
+			wantErr: true,
+		},
+		{
+			name: "accepts mTLS client",
+			creds: func(t *testing.T, certDir string) credentials.TransportCredentials {
+				t.Helper()
+				creds, err := tlsutil.ClientCredentials(certDir, "localhost")
+				require.NoError(t, err)
+				return creds
+			},
 			wantErr: false,
 		},
 	}
@@ -565,16 +601,7 @@ func TestStartTLSClient(t *testing.T) {
 				return true
 			}, 2*time.Second, 20*time.Millisecond)
 
-			var creds credentials.TransportCredentials
-			if tc.useMTLS {
-				var err error
-				creds, err = tlsutil.ClientCredentials(certDir, "localhost")
-				require.NoError(t, err)
-			} else {
-				creds = insecure.NewCredentials()
-			}
-
-			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(tc.creds(t, certDir)))
 			require.NoError(t, err)
 
 			rpcCtx, rpcCancel := context.WithTimeout(ctx, 3*time.Second)
