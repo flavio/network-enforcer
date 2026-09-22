@@ -127,6 +127,13 @@ func setupProviderScraper(
 		if err != nil {
 			return fmt.Errorf("istio provider: invalid OTEL port %q: %w", conf.provider.endpoint, err)
 		}
+		tlsCertDir := conf.provider.tlsCertDir
+		if certsource.Mode(conf.provider.tlsMode) != certsource.ModeInsecure && tlsCertDir == "" {
+			return fmt.Errorf(
+				"istio provider TLS mode %q requires --provider-tls-cert-dir",
+				conf.provider.tlsMode,
+			)
+		}
 		istioScraper := scraper.NewIstioScraper(scraper.IstioScraperConfig{
 			ViolationBuffer:      violationBuffer,
 			EnqueueLearningEvent: learningEnqueueFunc,
@@ -135,6 +142,7 @@ func setupProviderScraper(
 			OtelPort:             otelPort,
 			Enricher:             istio.NewEnricher(mgr.GetClient()),
 			FlowDumperBuffer:     flowDumperBuffer,
+			TLSCertDir:           tlsCertDir,
 		})
 		if err = mgr.Add(istioScraper); err != nil {
 			return fmt.Errorf("unable to add istio scraper to manager: %w", err)

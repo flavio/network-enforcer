@@ -24,6 +24,7 @@ import (
 	securityv1alpha1 "github.com/kubewarden/network-enforcer/api/v1alpha1"
 	"github.com/kubewarden/network-enforcer/internal/istio"
 	"github.com/kubewarden/network-enforcer/internal/ringbuf"
+	"github.com/kubewarden/network-enforcer/internal/tlsutil"
 	"github.com/kubewarden/network-enforcer/internal/types"
 	"github.com/kubewarden/network-enforcer/internal/violation"
 )
@@ -60,6 +61,7 @@ type IstioScraperConfig struct {
 	OtelPort             int
 	Enricher             *istio.Enricher
 	FlowDumperBuffer     *ringbuf.Buffer[json.RawMessage]
+	TLSCertDir           string
 }
 
 // IstioScraper receives OTLP log events from istio-watchers.
@@ -89,7 +91,16 @@ func (s *IstioScraper) Start(ctx context.Context) error {
 	}
 
 	var opts []grpc.ServerOption
-	s.Logger.InfoContext(ctx, "OTLP Istio scraper running in insecure mode")
+	if s.TLSCertDir != "" {
+		creds, credsErr := tlsutil.ServerCredentials(s.TLSCertDir)
+		if credsErr != nil {
+			_ = listener.Close()
+			return fmt.Errorf("failed to load TLS credentials for OTLP logs server: %w", credsErr)
+		}
+		opts = append(opts, grpc.Creds(creds))
+	} else {
+		s.Logger.InfoContext(ctx, "OTLP Istio scraper running in insecure mode")
+	}
 
 	grpcServer := grpc.NewServer(opts...)
 	collogspb.RegisterLogsServiceServer(grpcServer, s)

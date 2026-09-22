@@ -14,7 +14,39 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --provider-tls-mode=insecure
 
-  - it: "mounts CSI certs for issuer mode"
+  - it: "mounts CSI certs for Istio issuer mode with the chart CA and istio-otlp DNS names"
+    set:
+      controller:
+        provider:
+          tls:
+            mode: issuer
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --provider-tls-mode=issuer
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --provider-tls-cert-dir=/etc/provider/certs
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: provider-tls
+            mountPath: /etc/provider/certs
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: provider-tls
+            csi:
+              driver: csi.cert-manager.io
+              readOnly: true
+              volumeAttributes:
+                csi.cert-manager.io/issuer-name: my-release-network-enforcer-ca
+                csi.cert-manager.io/issuer-kind: Issuer
+                csi.cert-manager.io/issuer-group: cert-manager.io
+                csi.cert-manager.io/dns-names: my-release-network-enforcer-istio-otlp,my-release-network-enforcer-istio-otlp.my-namespace,my-release-network-enforcer-istio-otlp.my-namespace.svc,my-release-network-enforcer-istio-otlp.my-namespace.svc.cluster.local
+
+  - it: "mounts CSI certs for issuer mode with a custom issuer"
     set:
       controller:
         provider:
@@ -26,6 +58,29 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --provider-tls-cert-dir=/etc/provider/certs
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: provider-tls
+            csi:
+              driver: csi.cert-manager.io
+              readOnly: true
+              volumeAttributes:
+                csi.cert-manager.io/issuer-name: my-issuer
+                csi.cert-manager.io/issuer-kind: Issuer
+                csi.cert-manager.io/issuer-group: cert-manager.io
+                csi.cert-manager.io/dns-names: my-release-network-enforcer-istio-otlp,my-release-network-enforcer-istio-otlp.my-namespace,my-release-network-enforcer-istio-otlp.my-namespace.svc,my-release-network-enforcer-istio-otlp.my-namespace.svc.cluster.local
+
+  - it: "keeps controller-manager DNS names for non-Istio issuer mode"
+    set:
+      controller:
+        provider:
+          name: cilium
+          tls:
+            mode: issuer
+            issuerRef:
+              name: my-issuer
+    asserts:
       - contains:
           path: spec.template.spec.volumes
           content:
@@ -65,10 +120,24 @@ tests:
       - failedTemplate:
           errorMessage: controller.provider.tls.existingSecret.name is required when controller.provider.tls.mode=existingSecret
 
+  - it: "fails a cross-namespace existingSecret for Istio"
+    set:
+      controller:
+        provider:
+          tls:
+            mode: existingSecret
+            existingSecret:
+              name: provider-tls-certs
+              namespace: other-namespace
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.provider.tls.existingSecret.namespace cannot be set when controller.provider.name=istio; the Istio scraper is a TLS server and needs tls.crt/tls.key mounted in the pod
+
   - it: "passes a cross-namespace existingSecret as flags"
     set:
       controller:
         provider:
+          name: calico
           tls:
             mode: existingSecret
             existingSecret:
@@ -86,3 +155,125 @@ tests:
           path: spec.template.spec.volumes
           content:
             name: provider-tls
+---
+suite: "Provider TLS in istio fluent-bit"
+templates:
+  - templates/istio-fluent-bit/configmap.yaml
+  - templates/istio-fluent-bit/daemonset.yaml
+chart:
+  version: 1.0.0
+  appVersion: 2.0.0
+release:
+  name: my-release
+  namespace: my-namespace
+tests:
+  - it: "enables TLS and points at mounted certs in issuer mode"
+    set:
+      controller:
+        provider:
+          tls:
+            mode: issuer
+    documentSelector:
+      path: kind
+      value: ConfigMap
+      skipEmptyTemplates: true
+    asserts:
+      - matchRegex:
+          path: data["fluent-bit.conf"]
+          pattern: '(?m)^\s+Tls\s+On\s*$'
+      - matchRegex:
+          path: data["fluent-bit.conf"]
+          pattern: '(?m)^\s+Tls.verify\s+On\s*$'
+      - matchRegex:
+          path: data["fluent-bit.conf"]
+          pattern: '(?m)^\s+Tls.ca_file\s+/etc/provider/certs/ca.crt\s*$'
+      - matchRegex:
+          path: data["fluent-bit.conf"]
+          pattern: '(?m)^\s+Tls.crt_file\s+/etc/provider/certs/tls.crt\s*$'
+      - matchRegex:
+          path: data["fluent-bit.conf"]
+          pattern: '(?m)^\s+Tls.key_file\s+/etc/provider/certs/tls.key\s*$'
+
+  - it: "mounts a CSI client certificate on the DaemonSet in issuer mode"
+    set:
+      controller:
+        provider:
+          tls:
+            mode: issuer
+    documentSelector:
+      path: kind
+      value: DaemonSet
+      skipEmptyTemplates: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: provider-tls
+            mountPath: /etc/provider/certs
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: provider-tls
+            csi:
+              driver: csi.cert-manager.io
+              readOnly: true
+              volumeAttributes:
+                csi.cert-manager.io/issuer-name: my-release-network-enforcer-ca
+                csi.cert-manager.io/issuer-kind: Issuer
+                csi.cert-manager.io/issuer-group: cert-manager.io
+                csi.cert-manager.io/dns-names: my-release-network-enforcer-istio-fluent-bit
+---
+suite: "CA issuer for provider TLS"
+templates:
+  - templates/cert-manager.yaml
+chart:
+  version: 1.0.0
+  appVersion: 2.0.0
+release:
+  name: my-release
+  namespace: my-namespace
+tests:
+  - it: "creates the CA issuer for issuer mode without the shipped collector"
+    set:
+      telemetry:
+        collectorStrategy: none
+      controller:
+        provider:
+          tls:
+            mode: issuer
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: "creates the CA issuer for Cilium issuer mode without the shipped collector"
+    set:
+      telemetry:
+        collectorStrategy: none
+      controller:
+        provider:
+          name: cilium
+          tls:
+            mode: issuer
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: "does not create the CA issuer for insecure mode without the shipped collector"
+    set:
+      telemetry:
+        collectorStrategy: none
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: "still creates the CA issuer when the shipped collector is enabled"
+    set:
+      controller:
+        provider:
+          name: cilium
+          tls:
+            mode: insecure
+    asserts:
+      - hasDocuments:
+          count: 3
