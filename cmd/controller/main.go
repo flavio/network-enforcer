@@ -109,6 +109,19 @@ func parseLogLevel(level string) (slog.Level, error) {
 	return parsed, nil
 }
 
+// istioTLSCertDir returns the cert directory for the Istio OTLP server.
+// Non-insecure modes require a mounted cert dir because the scraper loads
+// material from files (CSI / volume), not from a Secret API source.
+func istioTLSCertDir(tlsMode, tlsCertDir string) (string, error) {
+	if certsource.Mode(tlsMode) != certsource.ModeInsecure && tlsCertDir == "" {
+		return "", fmt.Errorf(
+			"istio provider TLS mode %q requires --provider-tls-cert-dir",
+			tlsMode,
+		)
+	}
+	return tlsCertDir, nil
+}
+
 func setupProviderScraper(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -127,6 +140,10 @@ func setupProviderScraper(
 		if err != nil {
 			return fmt.Errorf("istio provider: invalid OTEL port %q: %w", conf.provider.endpoint, err)
 		}
+		tlsCertDir, err := istioTLSCertDir(conf.provider.tlsMode, conf.provider.tlsCertDir)
+		if err != nil {
+			return err
+		}
 		istioScraper := scraper.NewIstioScraper(scraper.IstioScraperConfig{
 			ViolationBuffer:      violationBuffer,
 			EnqueueLearningEvent: learningEnqueueFunc,
@@ -135,6 +152,7 @@ func setupProviderScraper(
 			OtelPort:             otelPort,
 			Enricher:             istio.NewEnricher(mgr.GetClient()),
 			FlowDumperBuffer:     flowDumperBuffer,
+			TLSCertDir:           tlsCertDir,
 		})
 		if err = mgr.Add(istioScraper); err != nil {
 			return fmt.Errorf("unable to add istio scraper to manager: %w", err)

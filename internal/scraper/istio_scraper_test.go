@@ -2,7 +2,19 @@ package scraper
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
 	"log/slog"
+	"math/big"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,6 +24,9 @@ import (
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +36,7 @@ import (
 	securityv1alpha1 "github.com/kubewarden/network-enforcer/api/v1alpha1"
 	"github.com/kubewarden/network-enforcer/internal/istio"
 	"github.com/kubewarden/network-enforcer/internal/ringbuf"
+	"github.com/kubewarden/network-enforcer/internal/tlsutil"
 	"github.com/kubewarden/network-enforcer/internal/types"
 	"github.com/kubewarden/network-enforcer/internal/violation"
 )
@@ -441,4 +457,165 @@ func TestPolicyEventToObservation(t *testing.T) {
 	require.Equal(t, securityv1alpha1.WorkloadNetworkPolicyModeProtect, obs.Action)
 	require.Equal(t, "default", obs.DenyingPolicyNamespace)
 	require.Equal(t, "deny-http-server-protect", obs.DenyingPolicyName)
+}
+
+func writeIstioTLSCertDir(t *testing.T) string {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{Organization: []string{"Test CA"}},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	require.NoError(t, err)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	caCert, err := x509.ParseCertificate(caDER)
+	require.NoError(t, err)
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{Organization: []string{"Test Leaf"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
+	require.NoError(t, err)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+
+	keyBytes, err := x509.MarshalECPrivateKey(leafKey)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tlsutil.CAFile), caPEM, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tlsutil.CertFile), certPEM, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tlsutil.KeyFile), keyPEM, 0o600))
+	return dir
+}
+
+func freeLocalPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+	return port
+}
+
+func TestStartTLSInvalidCertDir(t *testing.T) {
+	t.Parallel()
+
+	scraper := NewIstioScraper(IstioScraperConfig{
+		Logger:     slog.New(slog.DiscardHandler),
+		OtelPort:   freeLocalPort(t),
+		TLSCertDir: t.TempDir(), // empty dir: missing tls.crt / tls.key / ca.crt
+	})
+
+	err := scraper.Start(context.Background())
+	require.ErrorContains(t, err, "failed to load TLS credentials for OTLP logs server")
+}
+
+func TestStartTLSClient(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		creds   func(t *testing.T, certDir string) credentials.TransportCredentials
+		wantErr bool
+	}{
+		{
+			name: "rejects plaintext client",
+			creds: func(t *testing.T, _ string) credentials.TransportCredentials {
+				t.Helper()
+				return insecure.NewCredentials()
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects TLS client without a client certificate",
+			creds: func(t *testing.T, certDir string) credentials.TransportCredentials {
+				t.Helper()
+				caPool, err := tlsutil.LoadCACertPool(filepath.Join(certDir, tlsutil.CAFile))
+				require.NoError(t, err)
+				return credentials.NewTLS(&tls.Config{
+					MinVersion: tls.VersionTLS13,
+					RootCAs:    caPool,
+					ServerName: "localhost",
+				})
+			},
+			wantErr: true,
+		},
+		{
+			name: "accepts mTLS client",
+			creds: func(t *testing.T, certDir string) credentials.TransportCredentials {
+				t.Helper()
+				creds, err := tlsutil.ClientCredentials(certDir, "localhost")
+				require.NoError(t, err)
+				return creds
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			certDir := writeIstioTLSCertDir(t)
+			port := freeLocalPort(t)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			scraper := NewIstioScraper(IstioScraperConfig{
+				Logger:     slog.New(slog.DiscardHandler),
+				OtelPort:   port,
+				TLSCertDir: certDir,
+			})
+
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- scraper.Start(ctx)
+			}()
+
+			addr := fmt.Sprintf("127.0.0.1:%d", port)
+			require.Eventually(t, func() bool {
+				conn, err := net.Dial("tcp", addr)
+				if err != nil {
+					return false
+				}
+				_ = conn.Close()
+				return true
+			}, 2*time.Second, 20*time.Millisecond)
+
+			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(tc.creds(t, certDir)))
+			require.NoError(t, err)
+
+			rpcCtx, rpcCancel := context.WithTimeout(ctx, 3*time.Second)
+			defer rpcCancel()
+			_, err = collogspb.NewLogsServiceClient(conn).Export(rpcCtx, &collogspb.ExportLogsServiceRequest{})
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.NoError(t, conn.Close())
+			cancel()
+			require.NoError(t, <-errCh)
+		})
+	}
 }

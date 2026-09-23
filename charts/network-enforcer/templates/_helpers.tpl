@@ -133,7 +133,53 @@ TODO: default to issuer once the Istio and Cilium hops support TLS.
 */}}
 {{- define "network-enforcer.provider.tls.mode" -}}
 {{- $tls := default dict .Values.controller.provider.tls -}}
-{{- default "insecure" $tls.mode -}}
+{{- $provider := default "istio" .Values.controller.provider.name -}}
+{{- if $tls.mode -}}
+{{- $tls.mode -}}
+{{- else if eq $provider "istio" -}}
+issuer
+{{- else -}}
+insecure
+{{- end -}}
+{{- end -}}
+
+{{/*
+cert-manager Issuer name used when controller.provider.tls.mode=issuer.
+Falls back to the chart CA Issuer when issuerRef.name is empty.
+*/}}
+{{- define "network-enforcer.provider.tls.issuerName" -}}
+{{- $tls := default dict .Values.controller.provider.tls -}}
+{{- $issuer := default dict $tls.issuerRef -}}
+{{- if $issuer.name -}}
+{{- $issuer.name -}}
+{{- else -}}
+{{- include "network-enforcer.caIssuerName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+DNS SANs for the provider TLS certificate issued via CSI.
+Istio is a server hop, so the names must match the istio-otlp Service.
+*/}}
+{{- define "network-enforcer.provider.tls.dnsNames" -}}
+{{- $provider := default "istio" .Values.controller.provider.name -}}
+{{- if eq $provider "istio" -}}
+{{- $svc := include "network-enforcer.controller.istioService" . -}}
+{{- printf "%s,%s.%s,%s.%s.svc,%s.%s.svc.%s" $svc $svc .Release.Namespace $svc .Release.Namespace $svc .Release.Namespace .Values.kubernetesClusterDomain -}}
+{{- else -}}
+{{ include "network-enforcer.fullname" . }}-controller-manager
+{{- end -}}
+{{- end -}}
+
+{{/*
+True when the chart should create the self-signed CA Issuer used by issuer
+mode and the shipped OTel collector.
+*/}}
+{{- define "network-enforcer.caIssuer.enabled" -}}
+{{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
+{{- if or (eq .Values.telemetry.collectorStrategy "default") (eq $mode "issuer") -}}
+true
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -169,16 +215,25 @@ Validate provider TLS values and fail at template time.
 {{- define "network-enforcer.provider.tls.validate" -}}
 {{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
 {{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $issuer := default dict $tls.issuerRef -}}
 {{- $secret := default dict $tls.existingSecret -}}
 {{- if not (has $mode (list "issuer" "existingSecret" "insecure")) -}}
 {{- fail (printf "controller.provider.tls.mode must be issuer, existingSecret, or insecure (got %q)" $mode) -}}
 {{- end -}}
-{{- if and (eq $mode "issuer") (not $issuer.name) -}}
+{{- if and (eq $mode "issuer") (not (include "network-enforcer.provider.tls.issuerName" . | trim)) -}}
 {{- fail "controller.provider.tls.issuerRef.name is required when controller.provider.tls.mode=issuer" -}}
 {{- end -}}
 {{- if and (eq $mode "existingSecret") (not $secret.name) -}}
 {{- fail "controller.provider.tls.existingSecret.name is required when controller.provider.tls.mode=existingSecret" -}}
+{{- end -}}
+{{/*
+Cross-namespace existingSecret reads the Secret over the API (Calico/Goldmane).
+That is not valid for Istio: the scraper is a TLS server (fluent-bit is the client)
+and needs tls.crt/tls.key mounted in the pod, so only a same-namespace 
+Secret (or issuer CSI) works.
+*/}}
+{{- $provider := default "istio" .Values.controller.provider.name -}}
+{{- if and (eq $provider "istio") (eq (include "network-enforcer.provider.tls.apiSecret" . | trim) "true") -}}
+{{- fail "controller.provider.tls.existingSecret.namespace cannot be set when controller.provider.name=istio; the Istio scraper is a TLS server and needs tls.crt/tls.key mounted in the pod" -}}
 {{- end -}}
 {{- end -}}
 
@@ -247,12 +302,12 @@ Volumes for provider TLS material.
     driver: "csi.cert-manager.io"
     readOnly: true
     volumeAttributes:
-      csi.cert-manager.io/issuer-name: {{ $issuer.name }}
+      csi.cert-manager.io/issuer-name: {{ include "network-enforcer.provider.tls.issuerName" . }}
       csi.cert-manager.io/issuer-kind: {{ default "Issuer" $issuer.kind }}
       {{- if $issuer.group }}
       csi.cert-manager.io/issuer-group: {{ $issuer.group }}
       {{- end }}
-      csi.cert-manager.io/dns-names: {{ include "network-enforcer.fullname" . }}-controller-manager
+      csi.cert-manager.io/dns-names: {{ include "network-enforcer.provider.tls.dnsNames" . }}
 {{- else if and (eq $mode "existingSecret") $secret.name (not $secret.namespace) }}
 - name: provider-tls
   secret:
@@ -353,6 +408,49 @@ Print the otel volumes settings.
     secretName: {{ .Values.telemetry.externalCollector.otelCollectorClientCertificateSecret }}
 {{- end }}
 {{- end }}
+
+{{/*
+Volume mounts for the Istio fluent-bit client certificate.
+*/}}
+{{- define "network-enforcer.istio.fluentBit.tls.volumeMounts" -}}
+{{- include "network-enforcer.provider.tls.validate" . -}}
+{{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
+{{- if or (eq $mode "issuer") (and (eq $mode "existingSecret") (ne (include "network-enforcer.provider.tls.apiSecret" . | trim) "true")) }}
+- name: provider-tls
+  mountPath: {{ include "network-enforcer.provider.tls.certDir" . }}
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{/*
+Volumes for the Istio fluent-bit client certificate.
+Issuer mode uses cert-manager CSI with a per-Pod client cert. A same-namespace
+existingSecret is mounted as-is.
+*/}}
+{{- define "network-enforcer.istio.fluentBit.tls.volumes" -}}
+{{- include "network-enforcer.provider.tls.validate" . -}}
+{{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
+{{- $tls := default dict .Values.controller.provider.tls -}}
+{{- $issuer := default dict $tls.issuerRef -}}
+{{- $secret := default dict $tls.existingSecret -}}
+{{- if eq $mode "issuer" }}
+- name: provider-tls
+  csi:
+    driver: "csi.cert-manager.io"
+    readOnly: true
+    volumeAttributes:
+      csi.cert-manager.io/issuer-name: {{ include "network-enforcer.provider.tls.issuerName" . }}
+      csi.cert-manager.io/issuer-kind: {{ default "Issuer" $issuer.kind }}
+      {{- if $issuer.group }}
+      csi.cert-manager.io/issuer-group: {{ $issuer.group }}
+      {{- end }}
+      csi.cert-manager.io/dns-names: {{ include "network-enforcer.fullname" . }}-istio-fluent-bit
+{{- else if and (eq $mode "existingSecret") $secret.name (not $secret.namespace) }}
+- name: provider-tls
+  secret:
+    secretName: {{ $secret.name }}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Certificate helpers for mTLS (CA issuer and secret share a name).

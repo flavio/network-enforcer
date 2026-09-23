@@ -113,26 +113,7 @@ func installNetEnforcerChart() env.Func {
 		manager := helm.New(cfg.KubeconfigFile())
 
 		testCfg := getSuiteConfig(ctx)
-		controllerRepo, controllerTag := parseImage(testCfg.controllerImage)
-
-		helmOpts := []helm.Option{
-			helm.WithName(testCfg.releaseName),
-			helm.WithNamespace(testCfg.releaseNS),
-			helm.WithChart(testCfg.chartPath),
-			helm.WithArgs("--create-namespace"),
-			helm.WithArgs("--set", fmt.Sprintf("controller.image.repository=%s", controllerRepo)),
-			helm.WithArgs("--set", fmt.Sprintf("controller.image.tag=%s", controllerTag)),
-			helm.WithArgs("--set", "controller.logLevel=debug"),
-			helm.WithArgs("--set", "controller.flowDumper.enabled=true"),
-			helm.WithArgs("--set", fmt.Sprintf("controller.provider.name=%s", testCfg.ProviderName())),
-			helm.WithArgs("--set", fmt.Sprintf("controller.wnpStatusUpdateInterval=%s",
-				testCfg.wnpStatusUpdateInterval.String())),
-			helm.WithWait(),
-			helm.WithTimeout(defaultHelmTimeout.String()),
-		}
-		if !testCfg.HasE2EDependency("cert-manager") {
-			helmOpts = append(helmOpts, helm.WithArgs("--set", "telemetry.collectorStrategy=none"))
-		}
+		helmOpts := netEnforcerHelmOpts(testCfg)
 
 		logger.InfoContext(ctx, "🛠️ installing network enforcer chart", "releaseName", testCfg.releaseName)
 		if err := manager.RunInstall(helmOpts...); err != nil {
@@ -143,43 +124,79 @@ func installNetEnforcerChart() env.Func {
 		if err != nil {
 			return ctx, fmt.Errorf("create resources client: %w", err)
 		}
-
-		logger.InfoContext(ctx, "⏲️ waiting for network enforcer controller")
-		if err = wait.For(
-			conditions.New(r).DeploymentAvailable("network-enforcer-controller-manager", testCfg.releaseNS),
-			wait.WithTimeout(defaultOperationTimeout),
-		); err != nil {
-			return ctx, fmt.Errorf("wait network enforcer deployment ready: %w", err)
+		if err = waitForNetEnforcerReady(ctx, logger, r, testCfg); err != nil {
+			return ctx, err
 		}
-
-		if testCfg.HasE2EDependency("cert-manager") {
-			logger.InfoContext(ctx, "⏲️ waiting for default otel collector")
-			if err = wait.For(
-				conditions.New(r).DeploymentAvailable("network-enforcer-otel-collector", testCfg.releaseNS),
-				wait.WithTimeout(defaultOperationTimeout),
-			); err != nil {
-				return ctx, fmt.Errorf("wait default otel collector deployment ready: %w", err)
-			}
-		}
-
-		if testCfg.IsIstioProvider() {
-			// the istio-fluent-bit DaemonSet tails ztunnel access logs and forwards
-			// them via OTLP to the controller's istio scraper (the learning source).
-			logger.InfoContext(ctx, "⏲️ waiting for istio fluent-bit")
-			if err = wait.For(
-				conditions.New(r).DaemonSetReady(
-					&appsv1.DaemonSet{
-						Name:      "network-enforcer-istio-fluent-bit",
-						Namespace: testCfg.releaseNS,
-					}),
-				wait.WithTimeout(defaultOperationTimeout),
-			); err != nil {
-				return ctx, fmt.Errorf("wait istio fluent-bit daemonset ready: %w", err)
-			}
-		}
-
 		return ctx, nil
 	}
+}
+
+func netEnforcerHelmOpts(testCfg suiteConfig) []helm.Option {
+	controllerRepo, controllerTag := parseImage(testCfg.controllerImage)
+	helmOpts := []helm.Option{
+		helm.WithName(testCfg.releaseName),
+		helm.WithNamespace(testCfg.releaseNS),
+		helm.WithChart(testCfg.chartPath),
+		helm.WithArgs("--create-namespace"),
+		helm.WithArgs("--set", fmt.Sprintf("controller.image.repository=%s", controllerRepo)),
+		helm.WithArgs("--set", fmt.Sprintf("controller.image.tag=%s", controllerTag)),
+		helm.WithArgs("--set", "controller.logLevel=debug"),
+		helm.WithArgs("--set", "controller.flowDumper.enabled=true"),
+		helm.WithArgs("--set", fmt.Sprintf("controller.provider.name=%s", testCfg.ProviderName())),
+		helm.WithArgs("--set", fmt.Sprintf("controller.wnpStatusUpdateInterval=%s",
+			testCfg.wnpStatusUpdateInterval.String())),
+		helm.WithWait(),
+		helm.WithTimeout(defaultHelmTimeout.String()),
+	}
+	if testCfg.HasE2EDependency("cert-manager") && testCfg.IsIstioProvider() {
+		helmOpts = append(helmOpts, helm.WithArgs("--set", "controller.provider.tls.mode=issuer"))
+	}
+	if !testCfg.HasE2EDependency("cert-manager") {
+		helmOpts = append(helmOpts, helm.WithArgs("--set", "telemetry.collectorStrategy=none"))
+	}
+	return helmOpts
+}
+
+func waitForNetEnforcerReady(
+	ctx context.Context,
+	logger *slog.Logger,
+	r *resources.Resources,
+	testCfg suiteConfig,
+) error {
+	logger.InfoContext(ctx, "⏲️ waiting for network enforcer controller")
+	if err := wait.For(
+		conditions.New(r).DeploymentAvailable("network-enforcer-controller-manager", testCfg.releaseNS),
+		wait.WithTimeout(defaultOperationTimeout),
+	); err != nil {
+		return fmt.Errorf("wait network enforcer deployment ready: %w", err)
+	}
+
+	if testCfg.HasE2EDependency("cert-manager") {
+		logger.InfoContext(ctx, "⏲️ waiting for default otel collector")
+		if err := wait.For(
+			conditions.New(r).DeploymentAvailable("network-enforcer-otel-collector", testCfg.releaseNS),
+			wait.WithTimeout(defaultOperationTimeout),
+		); err != nil {
+			return fmt.Errorf("wait default otel collector deployment ready: %w", err)
+		}
+	}
+
+	if testCfg.IsIstioProvider() {
+		// the istio-fluent-bit DaemonSet tails ztunnel access logs and forwards
+		// them via OTLP to the controller's istio scraper (the learning source).
+		logger.InfoContext(ctx, "⏲️ waiting for istio fluent-bit")
+		if err := wait.For(
+			conditions.New(r).DaemonSetReady(
+				&appsv1.DaemonSet{
+					Name:      "network-enforcer-istio-fluent-bit",
+					Namespace: testCfg.releaseNS,
+				}),
+			wait.WithTimeout(defaultOperationTimeout),
+		); err != nil {
+			return fmt.Errorf("wait istio fluent-bit daemonset ready: %w", err)
+		}
+	}
+	return nil
 }
 
 func parseImage(image string) (string, string) {

@@ -62,6 +62,10 @@ spec:
               readOnly: true
             - name: state
               mountPath: /fluent-bit/state
+            {{- $tlsMounts := include "network-enforcer.istio.fluentBit.tls.volumeMounts" . | trim }}
+            {{- if $tlsMounts }}
+            {{- $tlsMounts | nindent 12 }}
+            {{- end }}
           resources:
             limits:
               cpu: 200m
@@ -81,4 +85,8 @@ spec:
             path: /var/lib/docker/containers
         - name: state
           emptyDir: {}
+        {{- $tlsVolumes := include "network-enforcer.istio.fluentBit.tls.volumes" . | trim }}
+        {{- if $tlsVolumes }}
+        {{- $tlsVolumes | nindent 8 }}
+        {{- end }}
 {{- end }}
