@@ -402,7 +402,7 @@ at runtime.
 ****
 - xref:{anchor_prefix}-github-com-kubewarden-network-enforcer-api-v1alpha1-violationinfo[$$ViolationInfo$$]
 - xref:{anchor_prefix}-github-com-kubewarden-network-enforcer-api-v1alpha1-violationrecord[$$ViolationRecord$$]
-- xref:{anchor_prefix}-github-com-kubewarden-network-enforcer-api-v1alpha1-violationrecordkey[$$ViolationRecordKey$$]
+- ViolationRecordKey
 - xref:{anchor_prefix}-github-com-kubewarden-network-enforcer-api-v1alpha1-workloadnetworkpolicyspec[$$WorkloadNetworkPolicySpec$$]
 ****
 
