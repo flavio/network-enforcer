@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	hubbleObserver "github.com/cilium/cilium/api/v1/observer"
 	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kubewarden/network-enforcer/internal/certsource"
 	"github.com/kubewarden/network-enforcer/internal/ringbuf"
+	"github.com/kubewarden/network-enforcer/internal/tlsutil"
 	"github.com/kubewarden/network-enforcer/internal/violation"
 )
 
@@ -26,6 +30,9 @@ type CiliumScraperConfig struct {
 	ViolationOtelLogger  otellog.Logger
 	ViolationBuffer      *ringbuf.Buffer[violation.Observation]
 	FlowDumperBuffer     *ringbuf.Buffer[json.RawMessage]
+	// A nil CertSource means the hop runs in plaintext.
+	CertSource    certsource.Source
+	TLSServerName string
 }
 
 type CiliumScraper struct {
@@ -37,13 +44,63 @@ func NewCiliumScraper(conf CiliumScraperConfig) *CiliumScraper {
 	return &CiliumScraper{CiliumScraperConfig: conf}
 }
 
-func (s *CiliumScraper) newHubbleClient() (hubbleObserver.ObserverClient, *grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(
-		s.Endpoint,
-		// todo!: support TLS with hubble-relay
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+// Relay's certificate is always issued for *.hubble-relay.cilium.io, so the endpoint host is only a fallback.
+func (s *CiliumScraper) tlsServerName() (string, error) {
+	if s.TLSServerName != "" {
+		return s.TLSServerName, nil
+	}
+	host, _, err := net.SplitHostPort(s.Endpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid Hubble Relay endpoint %q: %w", s.Endpoint, err)
+	}
+	return host, nil
+}
 
+// Material is re-read on every call, so rotation is picked up on the next reconnect.
+func (s *CiliumScraper) transportCredentials(ctx context.Context) (credentials.TransportCredentials, error) {
+	if s.CertSource == nil {
+		s.Logger.WarnContext(ctx, "Connecting to Hubble Relay without TLS")
+		return insecure.NewCredentials(), nil
+	}
+
+	serverName, err := s.tlsServerName()
+	if err != nil {
+		return nil, err
+	}
+
+	ca, cert, key, err := s.CertSource.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain TLS material for Hubble Relay: %w", err)
+	}
+	creds, err := tlsutil.ClientCredentialsFromPEM(ca, cert, key, serverName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load TLS credentials for Hubble Relay: %w", err)
+	}
+	s.Logger.InfoContext(ctx, "Using TLS credentials for Hubble Relay connection", "serverName", serverName)
+	return creds, nil
+}
+
+func (s *CiliumScraper) dialOptions(ctx context.Context) ([]grpc.DialOption, error) {
+	creds, err := s.transportCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
+
+	// gRPC overwrites tls.Config.ServerName with the channel authority, so the override must be the authority.
+	if s.CertSource != nil && s.TLSServerName != "" {
+		opts = append(opts, grpc.WithAuthority(s.TLSServerName))
+	}
+	return opts, nil
+}
+
+func (s *CiliumScraper) newHubbleClient(ctx context.Context) (hubbleObserver.ObserverClient, *grpc.ClientConn, error) {
+	opts, err := s.dialOptions(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conn, err := grpc.NewClient(s.Endpoint, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to Hubble: %w", err)
 	}
@@ -59,7 +116,7 @@ func (s *CiliumScraper) Start(ctx context.Context) error {
 
 func (s *CiliumScraper) stream(ctx context.Context, successfulConnection *bool) error {
 	*successfulConnection = false
-	client, conn, err := s.newHubbleClient()
+	client, conn, err := s.newHubbleClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create Hubble client: %w", err)
 	}
