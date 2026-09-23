@@ -163,8 +163,12 @@
                                     "enum": [
                                         "issuer",
                                         "existingSecret",
-                                        "insecure"
+                                        "insecure",
+                                        ""
                                     ]
+                                },
+                                "serverName": {
+                                    "type": "string"
                                 }
                             },
                             "additionalProperties": false

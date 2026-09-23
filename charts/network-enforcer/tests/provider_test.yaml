@@ -43,6 +43,20 @@ tests:
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
+          content: --provider-endpoint=hubble-relay.kube-system.svc:443
+      - notExists:
+          path: spec.template.spec.containers[0].ports
+
+  - it: "uses cilium plaintext default endpoint in insecure mode"
+    set:
+      controller:
+        provider:
+          name: cilium
+          tls:
+            mode: insecure
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
           content: --provider-endpoint=hubble-relay.kube-system.svc:80
       - notExists:
           path: spec.template.spec.containers[0].ports
