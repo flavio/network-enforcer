@@ -1,5 +1,11 @@
 clusters:
   - kind  # replace with your kubectl context name
+  # If you keep separate dev clusters per provider (see `make setup-dev-cluster
+  # CLUSTER_NAME=...` in docs/development.adoc), list all their contexts here,
+  # e.g.:
+  # - kind-istio
+  # - kind-calico
+  # - kind-cilium
 
 controller:
   image: controller
