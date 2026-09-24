@@ -1,6 +1,5 @@
 {{- if eq (include "network-enforcer.provider.tls.apiSecret" . | trim) "true" }}
-{{- $tls := default dict .Values.controller.provider.tls }}
-{{- $secret := default dict $tls.existingSecret }}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

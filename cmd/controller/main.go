@@ -85,6 +85,18 @@ type providerConfig struct {
 	tlsCertDir     string
 	tlsCertSecret  string
 	tlsCAConfigMap string
+	tlsServerName  string
+}
+
+// certSourceConfig maps the provider TLS flags onto [certsource.Config].
+func (p *providerConfig) certSourceConfig() certsource.Config {
+	return certsource.Config{
+		Mode:        certsource.Mode(p.tlsMode),
+		CertDir:     p.tlsCertDir,
+		CertSecret:  p.tlsCertSecret,
+		CAConfigMap: p.tlsCAConfigMap,
+		ServerName:  p.tlsServerName,
+	}
 }
 
 type config struct {
@@ -120,6 +132,19 @@ func istioTLSCertDir(tlsMode, tlsCertDir string) (string, error) {
 		)
 	}
 	return tlsCertDir, nil
+}
+
+// Reads through GetAPIReader so a cross-namespace Secret does not start a cluster-wide informer.
+func newProviderCertSource(mgr manager.Manager, conf *config) (certsource.Source, error) {
+	cfg := conf.provider.certSourceConfig()
+	if cfg.Mode == certsource.ModeInsecure {
+		return nil, nil //nolint:nilnil // an insecure hop has no certificate source
+	}
+	source, err := certsource.New(cfg, mgr.GetAPIReader())
+	if err != nil {
+		return nil, fmt.Errorf("unable to create provider TLS cert source: %w", err)
+	}
+	return source, nil
 }
 
 func setupProviderScraper(
@@ -159,6 +184,10 @@ func setupProviderScraper(
 		}
 		return nil
 	case types.ProviderCilium:
+		certSource, err := newProviderCertSource(mgr, conf)
+		if err != nil {
+			return err
+		}
 		ciliumScraper := scraper.NewCiliumScraper(scraper.CiliumScraperConfig{
 			Client:               mgr.GetClient(),
 			Logger:               logger.With("component", "cilium-scraper"),
@@ -167,9 +196,11 @@ func setupProviderScraper(
 			ViolationOtelLogger:  eventLogger,
 			ViolationBuffer:      violationBuffer,
 			FlowDumperBuffer:     flowDumperBuffer,
+			CertSource:           certSource,
+			TLSServerName:        conf.provider.tlsServerName,
 		})
-		if err := mgr.Add(ciliumScraper); err != nil {
-			return fmt.Errorf("unable to add cilium scraper to manager: %w", err)
+		if addErr := mgr.Add(ciliumScraper); addErr != nil {
+			return fmt.Errorf("unable to add cilium scraper to manager: %w", addErr)
 		}
 		return nil
 	case types.ProviderCalico:
@@ -273,12 +304,7 @@ func setupFlowDumper(
 }
 
 func run(logger *slog.Logger, conf *config) error {
-	if err := certsource.Validate(certsource.Config{
-		Mode:        certsource.Mode(conf.provider.tlsMode),
-		CertDir:     conf.provider.tlsCertDir,
-		CertSecret:  conf.provider.tlsCertSecret,
-		CAConfigMap: conf.provider.tlsCAConfigMap,
-	}); err != nil {
+	if err := certsource.Validate(conf.provider.certSourceConfig()); err != nil {
 		return fmt.Errorf("invalid provider TLS flags: %w", err)
 	}
 
@@ -460,6 +486,9 @@ func main() {
 	flag.StringVar(&conf.provider.tlsCAConfigMap, "provider-tls-ca-configmap", "",
 		"Optional ConfigMap holding the provider CA bundle, as namespace/name. "+
 			"Used with --provider-tls-cert-secret.")
+	flag.StringVar(&conf.provider.tlsServerName, "provider-tls-server-name", "",
+		"Optional TLS server name verified against the provider's server certificate. "+
+			"Defaults to the host part of --provider-endpoint.")
 	flag.StringVar(&conf.otel.Endpoint, "otlp-log-endpoint",
 		os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		"OTLP endpoint for the violation-lifecycle log exporter "+

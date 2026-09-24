@@ -292,3 +292,57 @@ func TestSecretSourceCARotation(t *testing.T) {
 	require.Equal(t, cert, gotCert)
 	require.Equal(t, key, gotKey)
 }
+
+func TestValidateServerName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ca, cert, key := generateCertPEMs(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tlsutil.CAFile), ca, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tlsutil.CertFile), cert, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tlsutil.KeyFile), key, 0o600))
+
+	tests := []struct {
+		name        string
+		cfg         Config
+		expectedErr string
+	}{
+		{
+			name: "issuer mode accepts a server name",
+			cfg: Config{
+				Mode:       ModeIssuer,
+				CertDir:    dir,
+				ServerName: "ui.hubble-relay.cilium.io",
+			},
+		},
+		{
+			name: "existingSecret mode accepts a server name",
+			cfg: Config{
+				Mode:       ModeExistingSecret,
+				CertSecret: "kube-system/hubble-relay-client-certs",
+				ServerName: "ui.hubble-relay.cilium.io",
+			},
+		},
+		{
+			name: "insecure mode rejects a server name",
+			cfg: Config{
+				Mode:       ModeInsecure,
+				ServerName: "ui.hubble-relay.cilium.io",
+			},
+			expectedErr: "--provider-tls-server-name",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := Validate(test.cfg)
+			if test.expectedErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.expectedErr)
+		})
+	}
+}

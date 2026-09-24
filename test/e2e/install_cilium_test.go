@@ -38,8 +38,9 @@ func installCilium(ctx context.Context, cfg *envconf.Config) (context.Context, e
 		helm.WithVersion(version),
 		helm.WithArgs("--set", "hubble.enabled=true"),
 		helm.WithArgs("--set", "hubble.relay.enabled=true"),
-		// todo!: enable tls for hubble relay
-		helm.WithArgs("--set", "hubble.relay.tls.server.enabled=false"),
+		// relay TLS puts the Service on port 443 and publishes a client key pair in kube-system/hubble-relay-client-certs.
+		helm.WithArgs("--set", "hubble.relay.tls.server.enabled=true"),
+		helm.WithArgs("--set", "hubble.relay.tls.server.mtls=true"),
 		// with this option cilium sends ICMP packets for egress denied traffic
 		helm.WithArgs("--set", "policyDenyResponse=icmp"),
 		helm.WithWait(),

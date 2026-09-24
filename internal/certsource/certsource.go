@@ -41,6 +41,8 @@ type Config struct {
 	CertSecret string
 	// CAConfigMap is an optional namespace/name reference to a CA bundle ConfigMap.
 	CAConfigMap string
+	// ServerName overrides the TLS server name. Empty derives it from the endpoint host.
+	ServerName string
 }
 
 // New returns a [Source] for cfg.
@@ -81,9 +83,10 @@ func ParseNamespacedName(value string) (types.NamespacedName, error) {
 func Validate(cfg Config) error {
 	switch cfg.Mode {
 	case ModeInsecure:
-		if cfg.CertDir != "" || cfg.CertSecret != "" || cfg.CAConfigMap != "" {
+		if cfg.CertDir != "" || cfg.CertSecret != "" || cfg.CAConfigMap != "" || cfg.ServerName != "" {
 			return fmt.Errorf(
-				"provider TLS mode %q does not accept --provider-tls-cert-dir, --provider-tls-cert-secret, or --provider-tls-ca-configmap",
+				"provider TLS mode %q does not accept --provider-tls-cert-dir, --provider-tls-cert-secret, "+
+					"--provider-tls-ca-configmap, or --provider-tls-server-name",
 				cfg.Mode,
 			)
 		}

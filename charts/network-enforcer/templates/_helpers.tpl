@@ -59,21 +59,29 @@ Name of the controller OTLP service used to reach the istio scraper.
 {{- end -}}
 
 {{/*
+Resolved provider name.
+*/}}
+{{- define "network-enforcer.provider.name" -}}
+{{- default "istio" .Values.controller.provider.name -}}
+{{- end -}}
+
+{{/*
 Resolved provider endpoint (configured or default by provider).
-Defaults:
-- istio: 4317
-- cilium: hubble-relay.kube-system.svc:80
-- calico: goldmane.calico-system.svc:7443
+Cilium mirrors its own chart: 443 with relay TLS, 80 without.
 */}}
 {{- define "network-enforcer.controller.providerEndpoint" -}}
-{{- $provider := default "istio" .Values.controller.provider.name -}}
+{{- $provider := include "network-enforcer.provider.name" . -}}
 {{- $endpoint := .Values.controller.provider.endpoint -}}
 {{- if not (empty $endpoint) -}}
 {{- $endpoint -}}
 {{- else if eq $provider "istio" -}}
 4317
 {{- else if eq $provider "cilium" -}}
+{{- if eq (include "network-enforcer.provider.tls.mode" . | trim) "insecure" -}}
 hubble-relay.kube-system.svc:80
+{{- else -}}
+hubble-relay.kube-system.svc:443
+{{- end -}}
 {{- else if eq $provider "calico" -}}
 goldmane.calico-system.svc:7443
 {{- else -}}
@@ -128,16 +136,16 @@ Directory where generic provider TLS material is mounted (CSI or a local Secret)
 {{- end -}}
 
 {{/*
-Resolved provider TLS mode. Defaults to insecure.
-TODO: default to issuer once the Istio and Cilium hops support TLS.
+auto resolves to existingSecret for cilium, insecure otherwise.
+TODO: default istio to issuer once that can be the shipped default.
 */}}
 {{- define "network-enforcer.provider.tls.mode" -}}
 {{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $provider := default "istio" .Values.controller.provider.name -}}
-{{- if $tls.mode -}}
-{{- $tls.mode -}}
-{{- else if eq $provider "istio" -}}
-issuer
+{{- $mode := default "auto" $tls.mode -}}
+{{- if ne $mode "auto" -}}
+{{- $mode -}}
+{{- else if eq (include "network-enforcer.provider.name" .) "cilium" -}}
+existingSecret
 {{- else -}}
 insecure
 {{- end -}}
@@ -160,12 +168,15 @@ Falls back to the chart CA Issuer when issuerRef.name is empty.
 {{/*
 DNS SANs for the provider TLS certificate issued via CSI.
 Istio is a server hop, so the names must match the istio-otlp Service.
+Cilium's client certificate only has to sit in Cilium's own name space.
 */}}
 {{- define "network-enforcer.provider.tls.dnsNames" -}}
-{{- $provider := default "istio" .Values.controller.provider.name -}}
+{{- $provider := include "network-enforcer.provider.name" . -}}
 {{- if eq $provider "istio" -}}
 {{- $svc := include "network-enforcer.controller.istioService" . -}}
 {{- printf "%s,%s.%s,%s.%s.svc,%s.%s.svc.%s" $svc $svc .Release.Namespace $svc .Release.Namespace $svc .Release.Namespace .Values.kubernetesClusterDomain -}}
+{{- else if eq $provider "cilium" -}}
+network-enforcer.hubble-relay.cilium.io
 {{- else -}}
 {{ include "network-enforcer.fullname" . }}-controller-manager
 {{- end -}}
@@ -183,16 +194,45 @@ true
 {{- end -}}
 
 {{/*
+Cilium publishes a client key pair and the relay CA in kube-system/hubble-relay-client-certs.
+*/}}
+{{- define "network-enforcer.provider.tls.existingSecret" -}}
+{{- $tls := default dict .Values.controller.provider.tls -}}
+{{- $secret := default dict $tls.existingSecret -}}
+{{- $name := default "" $secret.name -}}
+{{- $namespace := default "" $secret.namespace -}}
+{{- $caBundleConfigMap := default "" $secret.caBundleConfigMap -}}
+{{- if and (not $name) (eq (include "network-enforcer.provider.name" .) "cilium") -}}
+{{- $name = "hubble-relay-client-certs" -}}
+{{- $namespace = default "kube-system" $namespace -}}
+{{- end -}}
+{{- dict "name" $name "namespace" $namespace "caBundleConfigMap" $caBundleConfigMap | toJson -}}
+{{- end -}}
+
+{{/*
+Resolved TLS server name; empty defers to the endpoint host. Relay certs are always issued for *.hubble-relay.cilium.io.
+*/}}
+{{- define "network-enforcer.provider.tls.serverName" -}}
+{{- $tls := default dict .Values.controller.provider.tls -}}
+{{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
+{{- if eq $mode "insecure" -}}
+{{- else if $tls.serverName -}}
+{{- $tls.serverName -}}
+{{- else if eq (include "network-enforcer.provider.name" .) "cilium" -}}
+ui.hubble-relay.cilium.io
+{{- end -}}
+{{- end -}}
+
+{{/*
 True when the Calico Goldmane Secret should be mounted in the pod.
 TODO: drop this once Calico reads TLS material via existingSecret.
 Until then, insecure Calico still mounts the release-namespace client Secret.
 */}}
 {{- define "network-enforcer.provider.tls.mountGoldmaneSecret" -}}
 {{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
-{{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $secret := default dict $tls.existingSecret -}}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson -}}
 {{- $remote := and $secret.name $secret.namespace -}}
-{{- if and (eq (default "istio" .Values.controller.provider.name) "calico") (eq $mode "insecure") (not $remote) -}}
+{{- if and (eq (include "network-enforcer.provider.name" .) "calico") (eq $mode "insecure") (not $remote) -}}
 true
 {{- end -}}
 {{- end -}}
@@ -202,8 +242,7 @@ True when provider TLS material is read from the API server (cross-namespace Sec
 */}}
 {{- define "network-enforcer.provider.tls.apiSecret" -}}
 {{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
-{{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $secret := default dict $tls.existingSecret -}}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson -}}
 {{- if and (eq $mode "existingSecret") $secret.name $secret.namespace -}}
 true
 {{- end -}}
@@ -215,9 +254,9 @@ Validate provider TLS values and fail at template time.
 {{- define "network-enforcer.provider.tls.validate" -}}
 {{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
 {{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $secret := default dict $tls.existingSecret -}}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson -}}
 {{- if not (has $mode (list "issuer" "existingSecret" "insecure")) -}}
-{{- fail (printf "controller.provider.tls.mode must be issuer, existingSecret, or insecure (got %q)" $mode) -}}
+{{- fail (printf "controller.provider.tls.mode must be issuer, existingSecret, insecure, or auto (got %q)" $mode) -}}
 {{- end -}}
 {{- if and (eq $mode "issuer") (not (include "network-enforcer.provider.tls.issuerName" . | trim)) -}}
 {{- fail "controller.provider.tls.issuerRef.name is required when controller.provider.tls.mode=issuer" -}}
@@ -226,14 +265,13 @@ Validate provider TLS values and fail at template time.
 {{- fail "controller.provider.tls.existingSecret.name is required when controller.provider.tls.mode=existingSecret" -}}
 {{- end -}}
 {{/*
-Cross-namespace existingSecret reads the Secret over the API (Calico/Goldmane).
-That is not valid for Istio: the scraper is a TLS server (fluent-bit is the client)
-and needs tls.crt/tls.key mounted in the pod, so only a same-namespace 
-Secret (or issuer CSI) works.
+Istio is a TLS server, so it needs tls.crt/tls.key mounted: only a same-namespace Secret or issuer CSI works.
 */}}
-{{- $provider := default "istio" .Values.controller.provider.name -}}
-{{- if and (eq $provider "istio") (eq (include "network-enforcer.provider.tls.apiSecret" . | trim) "true") -}}
+{{- if and (eq (include "network-enforcer.provider.name" .) "istio") (eq (include "network-enforcer.provider.tls.apiSecret" . | trim) "true") -}}
 {{- fail "controller.provider.tls.existingSecret.namespace cannot be set when controller.provider.name=istio; the Istio scraper is a TLS server and needs tls.crt/tls.key mounted in the pod" -}}
+{{- end -}}
+{{- if and (eq $mode "insecure") $tls.serverName -}}
+{{- fail "controller.provider.tls.serverName is not accepted when controller.provider.tls.mode=insecure" -}}
 {{- end -}}
 {{- end -}}
 
@@ -247,15 +285,18 @@ Controller flags for the provider TLS hop.
 {{- if eq $mode "issuer" }}
 - --provider-tls-cert-dir={{ include "network-enforcer.provider.tls.certDir" . }}
 {{- else if and (eq $mode "existingSecret") (eq (include "network-enforcer.provider.tls.apiSecret" . | trim) "true") }}
-{{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $secret := default dict $tls.existingSecret }}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson }}
 - --provider-tls-cert-secret={{ $secret.namespace }}/{{ $secret.name }}
 {{- if $secret.caBundleConfigMap }}
 - --provider-tls-ca-configmap={{ $secret.namespace }}/{{ $secret.caBundleConfigMap }}
 {{- end }}
 {{- else if eq $mode "existingSecret" }}
 - --provider-tls-cert-dir={{ include "network-enforcer.provider.tls.certDir" . }}
-{{- end -}}
+{{- end }}
+{{- $serverName := include "network-enforcer.provider.tls.serverName" . | trim }}
+{{- if $serverName }}
+- --provider-tls-server-name={{ $serverName }}
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -273,8 +314,7 @@ Volume mounts for provider TLS material.
   mountPath: {{ include "network-enforcer.provider.tls.certDir" . }}
   readOnly: true
 {{- else if and (eq $mode "existingSecret") (ne (include "network-enforcer.provider.tls.apiSecret" . | trim) "true") }}
-{{- $tls := default dict .Values.controller.provider.tls -}}
-{{- $secret := default dict $tls.existingSecret -}}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson -}}
 {{- if and $secret.name (not $secret.namespace) }}
 - name: provider-tls
   mountPath: {{ include "network-enforcer.provider.tls.certDir" . }}
@@ -291,7 +331,7 @@ Volumes for provider TLS material.
 {{- $mode := include "network-enforcer.provider.tls.mode" . | trim -}}
 {{- $tls := default dict .Values.controller.provider.tls -}}
 {{- $issuer := default dict $tls.issuerRef -}}
-{{- $secret := default dict $tls.existingSecret -}}
+{{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson -}}
 {{- if eq (include "network-enforcer.provider.tls.mountGoldmaneSecret" . | trim) "true" }}
 - name: goldmane-certs
   secret:

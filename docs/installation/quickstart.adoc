@@ -185,13 +185,27 @@ operator and Hubble Relay to be ready:
 
 * `hubble.enabled=true` and `hubble.relay.enabled=true`, because the controller reads flows from the
   Hubble Relay gRPC API.
-* `hubble.relay.tls.server.enabled=false`, because the controller currently talks to
-  `hubble-relay.kube-system.svc:80` in plaintext.
+* `hubble.relay.tls.server.enabled=true` and `hubble.relay.tls.server.mtls=true`, so the flow stream
+  is encrypted and only readable by clients holding a certificate signed by the Hubble CA. The
+  controller presents the client key pair Cilium publishes in
+  `kube-system/hubble-relay-client-certs`, which is what `controller.provider.tls.mode=existingSecret`
+  defaults to for Cilium.
 * `policyDenyResponse=icmp`, so denied egress traffic is answered with an ICMP error instead of being
   silently dropped.
 
 Use `CILIUM_VERSION` to pick a different Cilium version, for example
 `CILIUM_VERSION=1.19.7 ./hack/setup-cilium.sh`.
+
+Use `HUBBLE_RELAY_TLS` to pick how the Hubble PKI is produced:
+
+* `helm` (default) lets Cilium's chart generate it. The CA private key stays in the `cilium-ca`
+  Secret, so cert-manager cannot sign from it and `controller.provider.tls.mode=issuer` does not
+  apply.
+* `certmanager` issues it from a cert-manager issuer, named with
+  `HUBBLE_CERT_MANAGER_ISSUER_NAME`. Only then can the controller's own client certificate come from
+  the same issuer with `controller.provider.tls.mode=issuer`.
+* `off` keeps Relay on plaintext `hubble-relay.kube-system.svc:80`. Install the chart with
+  `--set controller.provider.tls.mode=insecure` to match.
 
 == Install cert-manager and cert-manager-csi-driver
 
