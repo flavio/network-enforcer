@@ -14,23 +14,15 @@ The goal is to reduce manual NetworkPolicy authoring effort while improving visi
 
 ## Documentation
 
-### Getting Started
+The full documentation is available at
+[docs.kubewarden.io/network-enforcer](https://docs.kubewarden.io/network-enforcer/latest/en/introduction.html).
 
-- [Architecture](https://github.com/kubewarden/network-enforcer/blob/main/docs/architecture.adoc)
-- [Quick Start](https://github.com/kubewarden/network-enforcer/blob/main/docs/installation/quickstart.adoc)
-- [Compatibility](https://github.com/kubewarden/network-enforcer/blob/main/docs/compatibility.adoc)
-- [Uninstall](https://github.com/kubewarden/network-enforcer/blob/main/docs/installation/uninstall.adoc)
-
-### Usage
-
-- [Phases: Learn, Monitor, Protect](https://github.com/kubewarden/network-enforcer/blob/main/docs/phases.adoc)
-- [Known Limitations](https://github.com/kubewarden/network-enforcer/blob/main/docs/known_limitations.adoc)
-- [Troubleshooting](https://github.com/kubewarden/network-enforcer/blob/main/docs/troubleshooting.adoc)
-
-### Reference
-
-- [API Reference (CRDs)](https://github.com/kubewarden/network-enforcer/blob/main/docs/crd.adoc)
-- [CRD Documentation](https://github.com/kubewarden/network-enforcer/blob/main/docs/crds/README.md)
+- [Quick Start](https://docs.kubewarden.io/network-enforcer/latest/en/installation/quickstart.html)
+  — deploy Network Enforcer and walk through the learn/monitor/protect workflow.
+- [Compatibility](https://docs.kubewarden.io/network-enforcer/latest/en/compatibility.html)
+  — provider and platform requirements.
+- [Phases: learn, monitor, protect](https://docs.kubewarden.io/network-enforcer/latest/en/phases.html)
+  — understand the learn, monitor and protect phases in detail.
 
 ## License
 
