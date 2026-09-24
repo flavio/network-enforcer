@@ -274,18 +274,31 @@ endif
 	E2E_PROVIDER=$(E2E_PROVIDER) E2E_USE_EXISTING_CLUSTER=$(E2E_USE_EXISTING_CLUSTER) E2E_DEPENDENCIES=$(E2E_DEPENDENCIES) go test -v ./test/e2e/... -count=1
 
 # Create kind cluster and install selected provider with dependencies.
+#
+# Set CLUSTER_NAME to keep separate persistent kind clusters around per
+# provider (defaults to `kind` for backward compatibility). The kind cluster
+# name maps to the kubeconfig context `kind-<CLUSTER_NAME>`, which is what
+# `tilt up --context` targets below.
+#
 # Example: `make setup-dev-cluster E2E_PROVIDER=istio`
+# Example (separate clusters per provider):
+#   make setup-dev-cluster E2E_PROVIDER=istio CLUSTER_NAME=istio
+#   make setup-dev-cluster E2E_PROVIDER=calico CLUSTER_NAME=calico
+#   make setup-dev-cluster E2E_PROVIDER=cilium CLUSTER_NAME=cilium
+CLUSTER_NAME ?= kind
 .PHONY: setup-dev-cluster
 setup-dev-cluster:
-	@echo "🛠️ Setting up dev cluster with '$(E2E_PROVIDER)' provider..."
-	make test-e2e E2E_INSTALL_CLUSTER_ONLY=kind
+	@echo "🛠️ Setting up dev cluster '$(CLUSTER_NAME)' with '$(E2E_PROVIDER)' provider..."
+	make test-e2e E2E_INSTALL_CLUSTER_ONLY=$(CLUSTER_NAME)
 	@echo "🛠️ Calling tilt with '$(E2E_PROVIDER)' provider..."
-	tilt up -- --provider=$(E2E_PROVIDER)
+	tilt up --context=kind-$(CLUSTER_NAME) -- --provider=$(E2E_PROVIDER)
 
+# Delete the named dev cluster (defaults to `kind`).
+# Example: `make delete-dev-cluster CLUSTER_NAME=istio`
 .PHONY: delete-dev-cluster
 delete-dev-cluster:
-	@echo "🛠️ Delete dev cluster..."
-	kind delete cluster
+	@echo "🛠️ Delete dev cluster '$(CLUSTER_NAME)'..."
+	kind delete cluster --name $(CLUSTER_NAME)
 
 .PHONY: helm-unit-test
 helm-unit-test:

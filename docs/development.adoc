@@ -37,6 +37,17 @@ make setup-dev-cluster E2E_PROVIDER=istio
 ----
 +
 This creates a kind cluster named `kind`, installs the provider and cert-manager, then runs `tilt up`. Tilt's UI is typically http://localhost:10350[].
++
+Set `CLUSTER_NAME` to keep separate, persistent kind clusters around per provider instead of reusing the single `kind` cluster (`CLUSTER_NAME` defaults to `kind` if unset). The kind cluster name maps to the kubeconfig context `kind-<CLUSTER_NAME>`, which `setup-dev-cluster` passes to `tilt up --context` automatically:
++
+[source,bash]
+----
+make setup-dev-cluster E2E_PROVIDER=istio  CLUSTER_NAME=istio
+make setup-dev-cluster E2E_PROVIDER=calico CLUSTER_NAME=calico
+make setup-dev-cluster E2E_PROVIDER=cilium CLUSTER_NAME=cilium
+----
++
+Add each context (e.g. `kind-istio`, `kind-calico`, `kind-cilium`) to the `clusters` allow-list in `tilt-settings.yaml`. Only one Tilt instance can run at a time on the default port (`10350`); to switch between clusters, stop Tilt (`Ctrl-C`) and re-run `setup-dev-cluster` with the desired `CLUSTER_NAME`, or run `kubectl config use-context kind-<name>` and `tilt up` manually.
 . Check that the controller is up:
 +
 [source,bash]
@@ -44,11 +55,12 @@ This creates a kind cluster named `kind`, installs the provider and cert-manager
 kubectl get pods -n network-enforcer
 kubectl get workloadnetworkpolicyproposals.networkenforcer.kubewarden.io -A
 ----
-. When you are done, stop Tilt (`Ctrl-C`) and delete the cluster:
+. When you are done, stop Tilt (`Ctrl-C`) and delete the cluster (pass the same `CLUSTER_NAME` used above, if any):
 +
 [source,bash]
 ----
 make delete-dev-cluster
+make delete-dev-cluster CLUSTER_NAME=istio
 ----
 
 == Tests
