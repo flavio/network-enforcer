@@ -1,28 +1,16 @@
 # CRD documentation
 
-The CRDs documentation is generated automatically by using and the `config.yml` file shipped within this directory.
+The CRDs documentation is generated automatically by using <https://github.com/elastic/crd-ref-docs> and the `config.yml` file shipped within this directory.
 
 ## Documentation generation
 
-### Markdown
-
-To generate markdown documentation:
-
-```shell
-make markdown
-```
-
-The result will be saved to the `crd.md` file.
-
-### ASCIIDoc
-
-To generate asciidoc documentation:
+To generate the AsciiDoc documentation:
 
 ```shell
 make asciidoc
 ```
 
-The result will be saved to the `crd.adoc` file.
+The result will be saved to the `CRD-docs-for-docs-repo.adoc` file.
 
 ## Development notes
 
