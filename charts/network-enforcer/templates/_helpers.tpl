@@ -136,13 +136,14 @@ Directory where generic provider TLS material is mounted (CSI or a local Secret)
 {{- end -}}
 
 {{/*
-Resolved provider TLS mode. Empty defaults to existingSecret for cilium, insecure otherwise.
+auto resolves to existingSecret for cilium, insecure otherwise.
 TODO: default istio to issuer once that can be the shipped default.
 */}}
 {{- define "network-enforcer.provider.tls.mode" -}}
 {{- $tls := default dict .Values.controller.provider.tls -}}
-{{- if $tls.mode -}}
-{{- $tls.mode -}}
+{{- $mode := default "auto" $tls.mode -}}
+{{- if ne $mode "auto" -}}
+{{- $mode -}}
 {{- else if eq (include "network-enforcer.provider.name" .) "cilium" -}}
 existingSecret
 {{- else -}}
@@ -255,7 +256,7 @@ Validate provider TLS values and fail at template time.
 {{- $tls := default dict .Values.controller.provider.tls -}}
 {{- $secret := include "network-enforcer.provider.tls.existingSecret" . | fromJson -}}
 {{- if not (has $mode (list "issuer" "existingSecret" "insecure")) -}}
-{{- fail (printf "controller.provider.tls.mode must be issuer, existingSecret, or insecure (got %q)" $mode) -}}
+{{- fail (printf "controller.provider.tls.mode must be issuer, existingSecret, insecure, or auto (got %q)" $mode) -}}
 {{- end -}}
 {{- if and (eq $mode "issuer") (not (include "network-enforcer.provider.tls.issuerName" . | trim)) -}}
 {{- fail "controller.provider.tls.issuerRef.name is required when controller.provider.tls.mode=issuer" -}}

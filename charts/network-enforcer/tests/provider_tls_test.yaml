@@ -54,6 +54,33 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --provider-endpoint=hubble-relay.kube-system.svc:443
 
+  - it: "resolves auto to existingSecret for cilium"
+    set:
+      controller:
+        provider:
+          name: cilium
+          tls:
+            mode: auto
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --provider-tls-mode=existingSecret
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --provider-tls-cert-secret=kube-system/hubble-relay-client-certs
+
+  - it: "resolves auto to insecure for istio"
+    set:
+      controller:
+        provider:
+          name: istio
+          tls:
+            mode: auto
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --provider-tls-mode=insecure
+
   - it: "keeps cilium on plaintext port 80 in insecure mode"
     set:
       controller:

@@ -164,7 +164,7 @@
                                         "issuer",
                                         "existingSecret",
                                         "insecure",
-                                        ""
+                                        "auto"
                                     ]
                                 },
                                 "serverName": {

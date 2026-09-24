@@ -43,10 +43,9 @@ controller:
     # @schema type: [integer, string]
     endpoint: ""
     tls:
-      # Empty resolves to existingSecret for cilium and insecure for istio and calico.
-      # The cilium default expects hubble.relay.tls.server.enabled; use insecure for a plaintext hop.
-      # @schema enum: [issuer, existingSecret, insecure, ""]
-      mode: ""
+      # auto resolves to existingSecret for cilium and insecure for istio and calico.
+      # @schema enum: [issuer, existingSecret, insecure, auto]
+      mode: auto
       issuerRef:
         name: ""
         kind: Issuer
