@@ -50,6 +50,22 @@ app.kubernetes.io/name: {{ include "network-enforcer.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/*
+Print the image pull secrets in the expected format (an array of objects with one possible field, "name").
+Each entry of .Values.imagePullSecrets can be a plain string or a {name: ...} object.
+*/}}
+{{- define "network-enforcer.imagePullSecrets" }}
+    {{- $imagePullSecrets := list }}
+    {{- range . }}
+        {{- if kindIs "string" . }}
+            {{- $imagePullSecrets = append $imagePullSecrets (dict "name" .) }}
+        {{- else }}
+            {{- $imagePullSecrets = append $imagePullSecrets . }}
+        {{- end }}
+    {{- end }}
+    {{- toYaml $imagePullSecrets }}
+{{- end }}
+
 
 {{/*
 Name of the controller OTLP service used to reach the istio scraper.
