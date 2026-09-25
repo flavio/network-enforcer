@@ -51,6 +51,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Pod labels for the controller Deployment.
+Chart-owned labels (selector labels, component, common labels) always win over
+user-supplied controller.podLabels, so overriding a reserved key such as
+app.kubernetes.io/name cannot desync the Pod template from spec.selector.
+*/}}
+{{- define "network-enforcer.controller.podLabels" -}}
+{{- $chartLabels := dict "app.kubernetes.io/component" "controller" -}}
+{{- $chartLabels = merge $chartLabels (include "network-enforcer.labels" . | fromYaml) -}}
+{{- $userLabels := default dict .Values.controller.podLabels -}}
+{{- toYaml (merge $chartLabels $userLabels) -}}
+{{- end -}}
+
+{{/*
 Print the image pull secrets in the expected format (an array of objects with one possible field, "name").
 Each entry of .Values.imagePullSecrets can be a plain string or a {name: ...} object.
 */}}
