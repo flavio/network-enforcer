@@ -31,7 +31,8 @@ and policy lifecycle. The controller reads flow telemetry from the configured
 data-plane provider: Istio ambient (ztunnel and fluent-bit), Calico Goldmane,
 or Cilium Hubble Relay.
 
-The design documents are in the [RFCs](docs/rfc).
+The design documents are in the
+[RFCs](https://github.com/kubewarden/network-enforcer/tree/main/docs/rfc).
 
 ## Documentation
 
@@ -84,7 +85,8 @@ kubectl get pods -n network-enforcer
 
 ## Configuration
 
-The top-level keys of [`values.yaml`](charts/network-enforcer/values.yaml):
+The top-level keys of
+[`values.yaml`](https://github.com/kubewarden/network-enforcer/blob/main/charts/network-enforcer/values.yaml):
 
 | Key                   | Description                                                                                |
 | --------------------- | ------------------------------------------------------------------------------------------ |
@@ -185,7 +187,7 @@ To verify the signature of the image, run:
 
 ```shell
 cosign verify --certificate-oidc-issuer=https://token.actions.githubusercontent.com  \
-    --certificate-identity="https://github.com/kubewarden/network-enforcer/.github/workflows/release.yml@<TAG TO VERIFY>" \
+    --certificate-identity="https://github.com/kubewarden/network-enforcer/.github/workflows/release.yml@refs/tags/<TAG TO VERIFY>" \
     ghcr.io/kubewarden/network-enforcer/controller:<TAG TO VERIFY>
 ```
 
@@ -196,7 +198,7 @@ To verify the provenance file from the release assets, run:
 
 ```shell
 cosign verify-blob --certificate-oidc-issuer=https://token.actions.githubusercontent.com  \
-    --certificate-identity="https://github.com/kubewarden/network-enforcer/.github/workflows/release.yml@<TAG TO VERIFY>" \
+    --certificate-identity="https://github.com/kubewarden/network-enforcer/.github/workflows/release.yml@refs/tags/<TAG TO VERIFY>" \
     --bundle NetworkEnforcer-controller-attestation-amd64-provenance.intoto.jsonl.bundle.sigstore \
     NetworkEnforcer-controller-attestation-amd64-provenance.intoto.jsonl
 ```
@@ -205,7 +207,7 @@ To verify the SBOM file, use the same command with the `sbom.json` files:
 
 ```shell
 cosign verify-blob --certificate-oidc-issuer=https://token.actions.githubusercontent.com  \
-    --certificate-identity="https://github.com/kubewarden/network-enforcer/.github/workflows/release.yml@<TAG TO VERIFY>" \
+    --certificate-identity="https://github.com/kubewarden/network-enforcer/.github/workflows/release.yml@refs/tags/<TAG TO VERIFY>" \
     --bundle NetworkEnforcer-controller-attestation-amd64-sbom.json.bundle.sigstore \
     NetworkEnforcer-controller-attestation-amd64-sbom.json
 ```
